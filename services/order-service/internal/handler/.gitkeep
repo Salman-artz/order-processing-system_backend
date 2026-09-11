@@ -1,0 +1,3 @@
+// Package handler will contain HTTP route handlers for order-service.
+// Implemented in Phase 2.
+package handler

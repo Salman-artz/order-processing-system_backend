@@ -1,0 +1,35 @@
+# ── Build Artifacts ───────────────────────────────────────────
+bin/
+*.exe
+*.test
+*.out
+
+# ── Environment ───────────────────────────────────────────────
+# JANGAN PERNAH commit .env ke Git!
+.env
+.env.docker
+
+# ── Go Module Cache ───────────────────────────────────────────
+vendor/
+
+# ── IDE ───────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ── OS ────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Logs ──────────────────────────────────────────────────────
+*.log
+
+# ── Proto Generated Files ─────────────────────────────────────
+# Generated Go code from .proto files (regenerated via protoc)
+proto/**/*.pb.go
+proto/**/*_grpc.pb.go
+
+# ── Docker ────────────────────────────────────────────────────
+# Docker volume data (kalau mount lokal)
+data/

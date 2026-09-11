@@ -1,0 +1,44 @@
+# Order Processing System — Frontend
+# docker-compose.yml
+#
+# This compose file manages the FRONTEND service ONLY.
+# Backend services (order-service, inventory-service, payment-service,
+# notification-service, NATS, PostgreSQL) are managed in a separate
+# docker-compose project at ../order-processing-system/docker-compose.yml.
+#
+# Usage:
+#   cp .env.docker.example .env.docker
+#   docker compose --env-file .env.docker up -d --build
+
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Pass NEXT_PUBLIC_* as build-time ARGs so they get embedded into
+      # the JS bundle by next build. These values come from .env.docker.
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://host.docker.internal:8080/api/v1}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://host.docker.internal:8080/ws}
+        NEXT_PUBLIC_USE_MOCK: ${NEXT_PUBLIC_USE_MOCK:-false}
+    image: ops-frontend:latest
+    container_name: ops-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    # Runtime env vars (non-NEXT_PUBLIC) can still be set here.
+    # Note: NEXT_PUBLIC_* set here at runtime are NOT re-embedded — they
+    # were already baked into the bundle at build time via the ARGs above.
+    environment:
+      NODE_ENV: production
+    # host.docker.internal resolves automatically on Docker Desktop (Windows/Mac).
+    # On Linux with native Docker daemon it does NOT exist by default, so we
+    # inject it explicitly via extra_hosts pointing to the host gateway.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

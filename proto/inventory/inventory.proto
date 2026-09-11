@@ -1,0 +1,59 @@
+syntax = "proto3";
+
+package inventory;
+
+option go_package = "github.com/order-processing-system/proto/inventory;inventorypb";
+
+// InventoryService exposes synchronous gRPC calls from Order Service
+// to Inventory Service (e.g., check stock before creating an order).
+service InventoryService {
+  // CheckStock verifies whether requested items are available in stock.
+  // Called synchronously by Order Service before persisting an order.
+  rpc CheckStock(CheckStockRequest) returns (CheckStockResponse);
+
+  // GetProducts returns a list of products with current stock info.
+  // Called by Order Service to serve GET /api/v1/products endpoint.
+  rpc GetProducts(GetProductsRequest) returns (GetProductsResponse);
+
+  // GetProductByID returns a single product by its UUID.
+  rpc GetProductByID(GetProductByIDRequest) returns (ProductResponse);
+}
+
+// ── Request / Response messages ──────────────────────────────────────────────
+
+message StockItem {
+  string product_id = 1;
+  int32  quantity   = 2;
+}
+
+message CheckStockRequest {
+  string             order_id = 1;
+  repeated StockItem items    = 2;
+}
+
+message CheckStockResponse {
+  bool   available     = 1;
+  string reject_reason = 2; // populated if available = false
+}
+
+message GetProductsRequest {
+  int32 page     = 1; // 1-indexed
+  int32 page_size = 2; // default 20
+}
+
+message ProductResponse {
+  string product_id       = 1;
+  string name             = 2;
+  int32  stock_available  = 3;
+  int32  stock_reserved   = 4;
+  double price            = 5;
+}
+
+message GetProductsResponse {
+  repeated ProductResponse products = 1;
+  int32                    total    = 2;
+}
+
+message GetProductByIDRequest {
+  string product_id = 1;
+}

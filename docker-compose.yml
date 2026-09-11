@@ -1,0 +1,197 @@
+version: '3.8'
+
+networks:
+  order-system-network:
+    driver: bridge
+
+volumes:
+  pgdata_order:
+  pgdata_inventory:
+  pgdata_payment:
+  pgdata_notification:
+  nats_data:
+
+services:
+  # ==============================================================
+  # NATS JetStream
+  # ==============================================================
+  nats:
+    image: nats:2.10-alpine
+    container_name: nats-server
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats_data:/data
+    networks:
+      - order-system-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8222/varz"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  # ==============================================================
+  # PostgreSQL Databases
+  # ==============================================================
+  postgres-order:
+    image: postgres:16-alpine
+    container_name: postgres-order
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
+      POSTGRES_DB: order_db
+    ports:
+      - "6432:5432"
+    volumes:
+      - pgdata_order:/var/lib/postgresql/data
+    networks:
+      - order-system-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d order_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  postgres-inventory:
+    image: postgres:16-alpine
+    container_name: postgres-inventory
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
+      POSTGRES_DB: inventory_db
+    ports:
+      - "6433:5432" # exposed to 6433 host
+    volumes:
+      - pgdata_inventory:/var/lib/postgresql/data
+    networks:
+      - order-system-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d inventory_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  postgres-payment:
+    image: postgres:16-alpine
+    container_name: postgres-payment
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
+      POSTGRES_DB: payment_db
+    ports:
+      - "6434:5432"
+    volumes:
+      - pgdata_payment:/var/lib/postgresql/data
+    networks:
+      - order-system-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d payment_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  postgres-notification:
+    image: postgres:16-alpine
+    container_name: postgres-notification
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
+      POSTGRES_DB: notification_db
+    ports:
+      - "6435:5432"
+    volumes:
+      - pgdata_notification:/var/lib/postgresql/data
+    networks:
+      - order-system-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d notification_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ==============================================================
+  # Go Microservices
+  # ==============================================================
+  order-service:
+    build:
+      context: .
+      dockerfile: services/order-service/Dockerfile
+    container_name: order-service
+    ports:
+      - "8080:8080"
+    environment:
+      - ORDER_DB_URL=${ORDER_DB_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - NATS_URL=${NATS_URL}
+      - INVENTORY_GRPC_URL=inventory-service:50051
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres-order:
+        condition: service_healthy
+      inventory-service:
+        condition: service_started
+    networks:
+      - order-system-network
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: services/inventory-service/Dockerfile
+    container_name: inventory-service
+    ports:
+      - "8081:8081"
+      - "50051:50051"
+    environment:
+      - INVENTORY_DB_URL=${INVENTORY_DB_URL}
+      - NATS_URL=${NATS_URL}
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres-inventory:
+        condition: service_healthy
+    networks:
+      - order-system-network
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: services/payment-service/Dockerfile
+    container_name: payment-service
+    ports:
+      - "8082:8082"
+    environment:
+      - PAYMENT_DB_URL=${PAYMENT_DB_URL}
+      - NATS_URL=${NATS_URL}
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres-payment:
+        condition: service_healthy
+    networks:
+      - order-system-network
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: services/notification-service/Dockerfile
+    container_name: notification-service
+    ports:
+      - "8083:8083"
+    environment:
+      - NOTIFICATION_DB_URL=${NOTIFICATION_DB_URL}
+      - NATS_URL=${NATS_URL}
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres-notification:
+        condition: service_healthy
+    networks:
+      - order-system-network
