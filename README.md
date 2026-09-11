@@ -1,339 +1,250 @@
-# Order Processing System — Backend
+# Order Processing System - Backend
 
-Event-driven microservices backend built with Go, NATS JetStream, and PostgreSQL.
+Backend event-driven untuk pemrosesan order dengan pola **Saga choreography**. Sistem terdiri dari beberapa microservice Go yang berkomunikasi melalui REST, gRPC, dan NATS JetStream.
 
-> **Fase saat ini: Fase 1 (Scaffolding + Database)** — Business logic belum diimplementasi.
+## Status Project
+
+Versi saat ini sudah memiliki fondasi dan alur inti berikut:
+
+- Order Service: register/login JWT, membuat order, melihat order milik customer, dan admin order timeline.
+- Inventory Service: daftar produk, reservasi stok, pelepasan stok, REST, dan gRPC.
+- Payment Service: simulasi proses pembayaran berbasis event.
+- Notification Service: pencatatan event dan update order melalui WebSocket.
+- PostgreSQL terpisah untuk setiap service.
+- Auto-migration saat service mulai.
+- Auto-seed produk inventory saat database masih kosong.
+- Docker Compose untuk menjalankan backend beserta PostgreSQL dan NATS.
 
 ## Arsitektur
 
-```
-Customer / Admin (Next.js — project terpisah)
-           │ REST/HTTP
-           ▼
-   ┌───────────────────┐
-   │   Order Service   │ :8080  ← entry point utama
-   │   (PostgreSQL:    │
-   │    order_db)      │
-   └──────┬────────────┘
-          │ gRPC (sync check)
-          ▼
-   ┌───────────────────┐        ┌─────────────────────┐
-   │ Inventory Service │ :8081  │  Payment Service     │ :8082
-   │ (inventory_db)    │        │  (payment_db, mock)  │
-   └───────────────────┘        └─────────────────────┘
-                                          │
-   ┌───────────────────┐                  │
-   │Notification Svc   │ :8083 ←──────────┘
-   │(notification_db)  │
-   └───────────────────┘
+```text
+                         +-------------------+
+ Customer / Admin ------>|  Order Service    | :8080
+        REST              +---------+---------+
+                                   |
+                              NATS JetStream
+               +-----------------+-----------------+
+               |                 |                 |
+       +-------v-------+ +-------v-------+ +-------v--------+
+       | Inventory     | | Payment       | | Notification   |
+       | :8081 / gRPC  | | :8082         | | :8083 / WS     |
+       +-------+-------+ +-------+-------+ +--------+-------+
+               |                 |                  |
+          inventory_db       payment_db       notification_db
 
-   Message Broker: NATS JetStream (Docker, port 4222)
-   Database: PostgreSQL lokal localhost:5432 (4 database terpisah)
+                         order_db
 ```
 
-### Alur Saga (Choreography)
-1. `POST /orders` → **Order Service** simpan `PENDING` → publish `order.created`
-2. **Inventory Service** consume → reserve stok → publish `stock.reserved` / `stock.rejected`
-3. **Order Service** consume `stock.reserved` → update `AWAITING_PAYMENT` → publish `payment.requested`
-4. **Payment Service** consume → mock payment → publish `payment.success` / `payment.failed`
-5. **Order Service** consume hasil:
-   - Sukses → `COMPLETED` → publish `order.completed`
-   - Gagal → `CANCELLED` → publish `order.cancelled` (Inventory Service release stok)
-6. **Notification Service** consume semua events → log / WebSocket push
+### Alur Saga
 
----
-
-## Struktur Folder
-
-```
-order-processing-system/
-├── services/
-│   ├── order-service/
-│   │   ├── cmd/main.go
-│   │   ├── internal/
-│   │   │   ├── handler/      # HTTP handlers (Fase 2)
-│   │   │   ├── repository/   # DB queries (Fase 2)
-│   │   │   ├── service/      # Business logic (Fase 2)
-│   │   │   ├── event/        # NATS publisher & consumer (Fase 3)
-│   │   │   └── saga/         # Saga orchestration (Fase 3-4)
-│   │   ├── migrations/
-│   │   └── go.mod
-│   ├── inventory-service/    (struktur sama)
-│   ├── payment-service/      (struktur sama)
-│   └── notification-service/ (struktur sama)
-├── proto/
-│   └── inventory/inventory.proto   # gRPC definitions
-├── pkg/
-│   ├── logger/      # Shared zerolog logger
-│   ├── postgres/    # Shared pgxpool connector
-│   ├── natsclient/  # Shared NATS JetStream client
-│   ├── jwtutil/     # Shared JWT helper
-│   └── events/      # NATS subject constants & payload types
-├── scripts/
-│   ├── create-databases.sql  # Buat 4 database di Postgres lokal
-│   └── migrate-all.sh        # Jalankan semua migrations
-├── docker-compose.yml  # NATS JetStream only
-├── Makefile
-├── .env.example
-└── .gitignore
-```
-
----
-
-## Setup Fase 1 — Instruksi Validasi Manual
-
-### Prasyarat
-- PostgreSQL 14+ sudah berjalan di `localhost:5432`
-- Docker Desktop sudah berjalan
-- [`golang-migrate`](https://github.com/golang-migrate/migrate/releases) CLI terinstall
-- Go 1.23+
-
----
-
-### Langkah 1 — Salin dan Isi File `.env`
-
-```bash
-# Dari folder order-processing-system/
-cp .env.example .env
-```
-
-Buka `.env`, ganti `<user>` dan `<password>` dengan kredensial PostgreSQL lokal kamu:
-```env
-ORDER_DB_URL=postgres://postgres:mypassword@localhost:5432/order_db?sslmode=disable
-INVENTORY_DB_URL=postgres://postgres:mypassword@localhost:5432/inventory_db?sslmode=disable
-PAYMENT_DB_URL=postgres://postgres:mypassword@localhost:5432/payment_db?sslmode=disable
-NOTIFICATION_DB_URL=postgres://postgres:mypassword@localhost:5432/notification_db?sslmode=disable
-NATS_URL=nats://localhost:4222
-JWT_SECRET=isi-dengan-random-string-minimal-32-karakter
-```
-
----
-
-### Langkah 2 — Buat 4 Database di PostgreSQL Lokal
-
-**Opsi A — via psql CLI:**
-```bash
-psql -U postgres -h localhost -f scripts/create-databases.sql
-```
-
-**Opsi B — via pgAdmin atau TablePlus:**
-1. Buka pgAdmin / TablePlus
-2. Connect ke `localhost:5432` sebagai superuser (biasanya `postgres`)
-3. Buka Query Editor / SQL Editor
-4. Paste isi file `scripts/create-databases.sql`
-5. Jalankan (Execute / F5)
-
-**Verifikasi database berhasil dibuat:**
-```sql
--- Jalankan di psql atau pgAdmin, sambung ke database postgres (bukan yang baru)
-SELECT datname FROM pg_database
-WHERE datname IN ('order_db', 'inventory_db', 'payment_db', 'notification_db')
-ORDER BY datname;
-```
-Harus muncul 4 baris.
-
----
-
-### Langkah 3 — Jalankan NATS via Docker
-
-```bash
-docker compose up -d
-```
-
-**Verifikasi NATS berjalan:**
-```bash
-# Cek container
-docker ps | grep order-nats
-
-# Atau buka browser:
-# http://localhost:8222   → NATS monitoring dashboard
-```
-
----
-
-### Langkah 4 — Install golang-migrate (jika belum)
-
-```bash
-# Opsi 1: via Go install
-go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-
-# Opsi 2: Download binary dari https://github.com/golang-migrate/migrate/releases
-# Letakkan di folder yang ada di PATH (misal C:\Users\<user>\go\bin\)
-
-# Verifikasi:
-migrate -version
-```
-
----
-
-### Langkah 5 — Jalankan Semua Migrations
-
-```bash
-# Dari folder order-processing-system/
-bash scripts/migrate-all.sh
-```
-
-> **Windows (Git Bash / WSL):** Jalankan di Git Bash atau WSL.
-> **Windows (PowerShell):** Jalankan dengan `bash scripts/migrate-all.sh` di Git Bash, atau install WSL.
-
-Kalau berhasil, output akan seperti:
-```
-✅ order-service migration 'up' berhasil!
-✅ inventory-service migration 'up' berhasil!
-✅ payment-service migration 'up' berhasil!
-✅ notification-service migration 'up' berhasil!
-```
-
----
-
-### Langkah 6 — Verifikasi Tabel Berhasil Dibuat
-
-Sambungkan ke setiap database dan jalankan `\dt`:
-
-**Via psql:**
-```bash
-# order_db
-psql -U postgres -h localhost -d order_db -c "\dt"
-# Harus muncul: orders, order_items, saga_logs
-
-# inventory_db
-psql -U postgres -h localhost -d inventory_db -c "\dt"
-# Harus muncul: products, stock_reservations
-
-# payment_db
-psql -U postgres -h localhost -d payment_db -c "\dt"
-# Harus muncul: payments
-
-# notification_db
-psql -U postgres -h localhost -d notification_db -c "\dt"
-# Harus muncul: notifications_log
-```
-
-**Via pgAdmin / TablePlus:**
-- Pilih database `order_db` → Schemas → public → Tables → harus ada `orders`, `order_items`, `saga_logs`
-- Lakukan hal yang sama untuk 3 database lainnya
-
----
-
-### Langkah 7 — Load Seed Data (Inventory)
-
-```bash
-# Via psql:
-psql -U postgres -h localhost -d inventory_db \
-  -f services/inventory-service/migrations/seed.sql
-
-# Atau via Makefile (jika di Linux/Mac/WSL):
-make seed
-```
-
-**Verifikasi:**
-```sql
--- Di inventory_db
-SELECT name, stock_available, price FROM products ORDER BY price DESC;
--- Harus muncul 10 produk dummy
-```
-
----
-
-### Rangkuman Checklist Validasi Fase 1
-
-| # | Langkah | Ekspektasi |
-|---|---------|-----------|
-| 1 | `.env` diisi | File `.env` ada, `<user>` dan `<password>` sudah diganti |
-| 2 | `create-databases.sql` dijalankan | 4 database muncul di `pg_database` |
-| 3 | `docker compose up -d` | Container `order-nats` running, port 4222 & 8222 aktif |
-| 4 | `migrate-all.sh` dijalankan | Semua 4 service menampilkan ✅ |
-| 5 | `\dt` di setiap DB | Tabel-tabel sesuai PRD Section 6 muncul |
-| 6 | Seed data | 10 produk muncul di `products` |
-
----
+1. Customer membuat order melalui `POST /api/v1/orders`.
+2. Order Service menyimpan order sebagai `PENDING` dan menerbitkan `order.created`.
+3. Inventory Service memeriksa serta mereservasi stok.
+4. Jika stok tersedia, Order Service menerbitkan `payment.requested`.
+5. Payment Service menjalankan pembayaran mock dan menerbitkan hasil pembayaran.
+6. Order Service mengubah status menjadi `COMPLETED` atau `CANCELLED`.
+7. Notification Service mencatat event dan mengirim update melalui WebSocket.
 
 ## Tech Stack
 
-| Layer | Teknologi |
+| Area | Teknologi |
 |---|---|
 | Bahasa | Go 1.23+ |
 | HTTP | Fiber v2 |
-| gRPC | google.golang.org/grpc + protobuf |
-| Message Broker | NATS JetStream |
-| Database | PostgreSQL 14+ (per-service) |
+| RPC | gRPC + Protocol Buffers |
+| Event broker | NATS JetStream |
+| Database | PostgreSQL 14+ |
 | Migration | golang-migrate |
-| Auth | golang-jwt/jwt v5 |
+| Authentication | JWT |
 | Logging | zerolog |
-| Metrics | prometheus/client_golang |
+| Metrics | Prometheus client |
+| Deployment lokal | Docker Compose |
 
-## NATS Event Subjects
+## Struktur Repository
 
-| Subject | Publisher | Consumer |
+```text
+services/
+  order-service/         # API order, auth, dan saga consumer
+  inventory-service/     # Produk, stok, REST, dan gRPC
+  payment-service/       # Pembayaran mock berbasis event
+  notification-service/  # Log notifikasi dan WebSocket
+pkg/
+  events/                # Subject dan payload event
+  jwtutil/               # Helper JWT
+  logger/                # Shared logger
+  natsclient/            # Shared NATS client
+  postgres/              # Connector dan migration helper
+proto/                   # Definisi gRPC inventory
+scripts/                 # Database creation dan migration script
+docker-compose.yml       # Full local stack
+Makefile                 # Perintah development
+```
+
+## Prasyarat
+
+- Go 1.23 atau lebih baru
+- Docker Desktop dan Docker Compose v2
+- PostgreSQL 14+ jika menjalankan dependency secara native
+- `golang-migrate` jika menjalankan migration secara manual
+- `protoc` dan plugin Go jika ingin generate ulang kode protobuf
+
+## Menjalankan Full Stack dengan Docker
+
+Cara ini menjalankan NATS, empat database PostgreSQL, dan seluruh service Go.
+
+```bash
+cp .env.docker.example .env.docker
+docker compose --env-file .env.docker up -d --build
+docker compose ps
+```
+
+Endpoint utama:
+
+| Service | URL / Port |
+|---|---|
+| Order REST API | `http://localhost:8080` |
+| Inventory REST API | `http://localhost:8081` |
+| Payment Service | `http://localhost:8082` |
+| Notification WebSocket | `ws://localhost:8083/ws/orders/:orderId` |
+| NATS client | `nats://localhost:4222` |
+| NATS monitoring | `http://localhost:8222` |
+
+Semua service menjalankan migration saat startup. Inventory Service otomatis mengisi data produk jika tabel `products` masih kosong.
+
+Melihat log:
+
+```bash
+docker compose logs -f order-service
+docker compose logs -f inventory-service
+```
+
+Menghentikan stack:
+
+```bash
+docker compose down
+```
+
+Untuk menghapus container sekaligus seluruh data database Docker:
+
+```bash
+docker compose down -v
+```
+
+## Menjalankan Secara Native
+
+1. Salin konfigurasi:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Isi koneksi database dan secret JWT di `.env`.
+3. Buat database PostgreSQL:
+
+   ```bash
+   psql -U postgres -h localhost -f scripts/create-databases.sql
+   ```
+
+4. Jalankan NATS:
+
+   ```bash
+   docker compose up -d nats
+   ```
+
+5. Jalankan migration manual bila diperlukan:
+
+   ```bash
+   bash scripts/migrate-all.sh up
+   ```
+
+6. Jalankan service dari folder masing-masing:
+
+   ```bash
+   cd services/order-service
+   go run ./cmd
+   ```
+
+Untuk development, gunakan beberapa terminal untuk service inventory, payment, dan notification.
+
+## Environment Variables
+
+Template tersedia di `.env.example` dan `.env.docker.example`. Variable utama:
+
+| Variable | Fungsi |
+|---|---|
+| `ORDER_DB_URL` | Koneksi database order |
+| `INVENTORY_DB_URL` | Koneksi database inventory |
+| `PAYMENT_DB_URL` | Koneksi database payment |
+| `NOTIFICATION_DB_URL` | Koneksi database notification |
+| `NATS_URL` | URL NATS JetStream |
+| `JWT_SECRET` | Secret signing JWT |
+| `ORDER_SERVICE_PORT` | Port Order Service, default `8080` |
+| `INVENTORY_HTTP_PORT` | Port REST Inventory, default `8081` |
+| `PAYMENT_SERVICE_PORT` | Port Payment Service, default `8082` |
+| `NOTIFICATION_SERVICE_PORT` | Port Notification, default `8083` |
+| `INVENTORY_GRPC_PORT` | Port gRPC Inventory |
+
+Jangan commit `.env` atau secret production.
+
+## Endpoint Utama
+
+### Auth
+
+- `POST /api/v1/auth/register`
+- `POST /api/v1/auth/login`
+
+### Customer
+
+- `POST /api/v1/orders`
+- `GET /api/v1/orders`
+- `GET /api/v1/orders/:id`
+
+### Admin
+
+- `GET /api/v1/admin/orders`
+- `GET /api/v1/admin/orders/:id/timeline`
+
+### Inventory
+
+- `GET /api/v1/products`
+- `GET /health` tersedia pada setiap HTTP service.
+
+Gunakan header berikut untuk endpoint yang membutuhkan autentikasi:
+
+```text
+Authorization: Bearer <JWT_TOKEN>
+```
+
+## Event Subjects
+
+| Subject | Publisher | Consumer utama |
 |---|---|---|
-| `order.created` | Order Service | Inventory Service |
-| `stock.reserved` | Inventory Service | Order Service |
-| `stock.rejected` | Inventory Service | Order Service |
-| `payment.requested` | Order Service | Payment Service |
-| `payment.success` | Payment Service | Order Service, Notification |
-| `payment.failed` | Payment Service | Order Service, Notification |
-| `order.cancelled` | Order Service | Inventory Service, Notification |
-| `order.completed` | Order Service | Notification Service |
+| `order.created` | Order | Inventory |
+| `stock.reserved` | Inventory | Order |
+| `stock.rejected` | Inventory | Order |
+| `payment.requested` | Order | Payment |
+| `payment.success` | Payment | Order, Notification |
+| `payment.failed` | Payment | Order, Notification |
+| `order.cancelled` | Order | Inventory, Notification |
+| `order.completed` | Order | Notification |
 
----
+## Make Commands
 
-*Fase 2: Order Service CRUD + Auth JWT + Inventory Service gRPC*
+```bash
+make help
+make nats-up
+make nats-down
+make migrate-up
+make migrate-down
+make seed
+make proto-gen
+make tidy-all
+make build-all
+```
 
-## Menjalankan via Docker (Full Stack)
+## Catatan Pengembangan
 
-Untuk keperluan demo atau portofolio, seluruh backend (termasuk 4 instance PostgreSQL dan NATS) dapat dijalankan cukup dengan satu perintah melalui Docker Compose.
-
-### Prasyarat
-- Docker & Docker Compose terinstall dan berjalan (Docker Desktop).
-
-### Langkah-langkah
-1. **Persiapkan Environment Variables**
-   Salin template environment untuk docker:
-   ```bash
-   cp .env.docker.example .env.docker
-   ```
-
-2. **Jalankan Docker Compose**
-   Build dan jalankan seluruh container (berjalan di background):
-   ```bash
-   docker compose --env-file .env.docker up -d --build
-   ```
-
-3. **Verifikasi Container Sehat**
-   Semua container database dan NATS memiliki _healthcheck_. Go services akan menunggu _healthcheck_ ini selesai (kondisi `service_healthy`) sebelum menyala.
-   Cek status container:
-   ```bash
-   docker compose ps
-   ```
-   Pastikan keempat service (`order-service`, `inventory-service`, `payment-service`, `notification-service`) berstatus `Up`.
-
-   Cek log service (contoh untuk order-service):
-   ```bash
-   docker compose logs -f order-service
-   ```
-   > **Catatan Auto-Migration & Auto-Seed**: Setiap service Go akan otomatis menjalankan migration `up` ke databasenya masing-masing saat startup. `inventory-service` juga otomatis mengisi seed produk (jika database masih kosong).
-
-4. **Testing Sederhana (Create Order)**
-   Setelah semua jalan, Anda bisa langsung mengetes API:
-   ```bash
-   # Register
-   curl -X POST http://localhost:8080/api/v1/auth/register -H "Content-Type: application/json" -d '{"email": "docker@demo.com", "password": "123", "name": "Docker"}'
-   
-   # Login & Ambil Token (simpan di variable TOKEN)
-   
-   # Cek produk (Inventory gRPC call)
-   curl -X GET http://localhost:8080/api/v1/products -H "Authorization: Bearer <TOKEN>"
-   
-   # Buka WebSocket di terminal terpisah
-   wscat -c ws://localhost:8083/ws/orders/<ORDER_ID_YANG_AKAN_DIBUAT>
-   
-   # Create Order -> Trigger SAGA
-   curl -X POST http://localhost:8080/api/v1/orders -H "Authorization: Bearer <TOKEN>" -H "Content-Type: application/json" -d '{"items": [{"product_id": "<PRODUCT_ID>", "quantity": 1, "price": 10000}]}'
-   ```
-
-5. **Stop & Cleanup**
-   Untuk menghentikan semua service dan **menghapus seluruh data database** (hapus volume):
-   ```bash
-   docker compose down -v
-   ```
-
+- Payment saat ini masih berupa mock service.
+- Saga berjalan melalui event NATS; pastikan NATS aktif sebelum service dimulai.
+- Database dipisahkan per service untuk menjaga ownership data.
+- `docker compose down -v` bersifat destruktif terhadap data lokal Docker.
