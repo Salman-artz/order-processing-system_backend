@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"fmt"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/order-processing-system/payment-service/internal/repository"
 	"github.com/order-processing-system/payment-service/internal/service"
@@ -52,5 +54,77 @@ func (h *PaymentRESTHandler) GetPaymentsByOrder(c *fiber.Ctx) error {
 
 	return c.JSON(fiber.Map{
 		"data": res,
+	})
+}
+
+// ── Midtrans Handlers ────────────────────────────────────────────────────────
+
+type CreateSnapRequest struct {
+	OrderID string  `json:"order_id"`
+	Amount  float64 `json:"amount"`
+	Email   string  `json:"email"`
+}
+
+func (h *PaymentRESTHandler) CreateSnap(c *fiber.Ctx) error {
+	var req CreateSnapRequest
+	if err := c.BodyParser(&req); err != nil || req.OrderID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid payload"})
+	}
+
+	snapResp, err := h.svc.CreateSnapTransaction(c.Context(), req.OrderID, req.Amount, req.Email)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(snapResp)
+}
+
+func (h *PaymentRESTHandler) MidtransNotification(c *fiber.Ctx) error {
+	var notif service.MidtransNotification
+	if err := c.BodyParser(&notif); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid notification payload"})
+	}
+
+	if err := h.svc.HandleMidtransNotification(c.Context(), notif); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"status":  "ok",
+		"message": "Notification processed successfully",
+	})
+}
+
+type SimulatePaymentRequest struct {
+	OrderID string `json:"order_id"`
+	Status  string `json:"status"` // settlement, expire, cancel, deny
+}
+
+func (h *PaymentRESTHandler) SimulatePayment(c *fiber.Ctx) error {
+	var req SimulatePaymentRequest
+	if err := c.BodyParser(&req); err != nil || req.OrderID == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid simulation payload"})
+	}
+
+	if req.Status == "" {
+		req.Status = "settlement"
+	}
+
+	notif := service.MidtransNotification{
+		OrderID:           req.OrderID,
+		TransactionStatus: req.Status,
+		FraudStatus:       "accept",
+		StatusCode:        "200",
+		PaymentType:       "qris",
+		StatusMessage:     fmt.Sprintf("Simulated %s via Midtrans", req.Status),
+	}
+
+	if err := h.svc.HandleMidtransNotification(c.Context(), notif); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(fiber.Map{
+		"status":  "ok",
+		"message": fmt.Sprintf("Midtrans payment simulated as %s", req.Status),
 	})
 }

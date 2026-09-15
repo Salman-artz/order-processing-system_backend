@@ -19,6 +19,10 @@ type Querier interface {
 	ReleaseStock(ctx context.Context, arg ReleaseStockParams) (Product, error)
 	ReserveStock(ctx context.Context, arg ReserveStockParams) (Product, error)
 	UpdateStockReservationStatus(ctx context.Context, arg UpdateStockReservationStatusParams) (StockReservation, error)
+	CreateProduct(ctx context.Context, arg CreateProductParams) (Product, error)
+	UpdateProduct(ctx context.Context, arg UpdateProductParams) (Product, error)
+	RestockProduct(ctx context.Context, arg RestockProductParams) (Product, error)
+	DeleteProduct(ctx context.Context, id uuid.UUID) error
 }
 
 var _ Querier = (*Queries)(nil)

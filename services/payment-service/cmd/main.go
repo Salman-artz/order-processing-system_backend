@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/joho/godotenv"
 	"github.com/nats-io/nats.go/jetstream"
 
@@ -79,13 +80,27 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	})
 
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowMethods: "GET, POST, PUT, DELETE, OPTIONS, HEAD",
+	}))
+
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 
 	restHandler := handler.NewPaymentRESTHandler(paySvc)
-	admin := app.Group("/api/v1/admin")
+
+	v1 := app.Group("/api/v1")
+	admin := v1.Group("/admin")
 	admin.Get("/payments/:order_id", restHandler.GetPaymentsByOrder)
+
+	// Midtrans Gateway Routes
+	payments := v1.Group("/payments")
+	payments.Post("/midtrans/snap", restHandler.CreateSnap)
+	payments.Post("/midtrans/notification", restHandler.MidtransNotification)
+	payments.Post("/midtrans/simulate", restHandler.SimulatePayment)
 
 	httpPort := os.Getenv("PAYMENT_HTTP_PORT")
 	if httpPort == "" {

@@ -50,7 +50,23 @@ func (s *notificationService) ProcessEvent(ctx context.Context, orderID, eventTy
 	log.Printf("[EMAIL MOCK] Sending email notification for Order %s | Event: %s", orderID, eventType)
 
 	// 2. Broadcast via WebSocket
-	s.broadcast(orderID, fmt.Sprintf(`{"event": "%s", "message": "%s"}`, eventType, message))
+	var status string
+	switch eventType {
+	case "ORDER_CREATED":
+		status = "PENDING"
+	case "STOCK_RESERVED", "PAYMENT_REQUESTED":
+		status = "RESERVED"
+	case "PAYMENT_SUCCESS":
+		status = "PAID"
+	case "ORDER_COMPLETED":
+		status = "COMPLETED"
+	case "ORDER_CANCELLED", "PAYMENT_FAILED", "STOCK_REJECTED":
+		status = "CANCELLED"
+	default:
+		status = "PENDING"
+	}
+
+	s.broadcast(orderID, fmt.Sprintf(`{"event": "%s", "status": "%s", "order_id": "%s"}`, eventType, status, orderID))
 	return nil
 }
 

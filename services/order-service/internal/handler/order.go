@@ -2,10 +2,11 @@ package handler
 
 import (
 	"fmt"
+
 	"github.com/gofiber/fiber/v2"
-	"github.com/order-processing-system/pkg/events"
 	"github.com/order-processing-system/order-service/internal/repository"
 	"github.com/order-processing-system/order-service/internal/service"
+	"github.com/order-processing-system/pkg/events"
 )
 
 type OrderHandler struct {
@@ -46,7 +47,8 @@ func (h *OrderHandler) CreateOrder(c *fiber.Ctx) error {
 func (h *OrderHandler) GetOrder(c *fiber.Ctx) error {
 	orderID := c.Params("id")
 	customerID := c.Locals("user_id").(string)
-	roleStr := fmt.Sprintf("%v", c.Locals("role")); role := roleStr // from jwtutil.Role, but stored as string in locals sometimes
+	roleStr := fmt.Sprintf("%v", c.Locals("role"))
+	role := roleStr
 
 	order, err := h.svc.GetOrder(c.Context(), orderID)
 	if err != nil {
@@ -58,7 +60,35 @@ func (h *OrderHandler) GetOrder(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Forbidden"})
 	}
 
-	return c.JSON(order)
+	rawItems, _ := h.svc.GetOrderItems(c.Context(), orderID)
+	type OrderItemResponse struct {
+		ID        string  `json:"id"`
+		OrderID   string  `json:"order_id"`
+		ProductID string  `json:"product_id"`
+		Quantity  int32   `json:"quantity"`
+		Price     float64 `json:"price"`
+	}
+
+	items := make([]OrderItemResponse, 0)
+	for _, it := range rawItems {
+		items = append(items, OrderItemResponse{
+			ID:        it.ID.String(),
+			OrderID:   it.OrderID.String(),
+			ProductID: it.ProductID.String(),
+			Quantity:  it.Quantity,
+			Price:     repository.NumericToFloat64(it.Price),
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"id":           order.ID.String(),
+		"customer_id":  order.CustomerID.String(),
+		"status":       order.Status,
+		"total_amount": repository.NumericToFloat64(order.TotalAmount),
+		"items":        items,
+		"created_at":   order.CreatedAt,
+		"updated_at":   order.UpdatedAt,
+	})
 }
 
 func (h *OrderHandler) ListCustomerOrders(c *fiber.Ctx) error {
@@ -70,7 +100,7 @@ func (h *OrderHandler) ListCustomerOrders(c *fiber.Ctx) error {
 	}
 
 	if orders == nil {
-		orders = make([]repository.Order, 0) // Return empty array instead of null
+		orders = make([]repository.Order, 0)
 	}
 
 	return c.JSON(fiber.Map{

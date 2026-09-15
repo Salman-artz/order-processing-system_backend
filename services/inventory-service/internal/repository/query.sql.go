@@ -9,6 +9,7 @@ import (
 	"context"
 
 	uuid "github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const confirmStock = `-- name: ConfirmStock :one
@@ -238,4 +239,99 @@ func (q *Queries) UpdateStockReservationStatus(ctx context.Context, arg UpdateSt
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const createProduct = `-- name: CreateProduct :one
+INSERT INTO products (name, stock_available, stock_reserved, price)
+VALUES ($1, $2, 0, $3)
+RETURNING id, name, stock_available, stock_reserved, price, created_at, updated_at
+`
+
+type CreateProductParams struct {
+	Name           string         `json:"name"`
+	StockAvailable int32          `json:"stock_available"`
+	Price          pgtype.Numeric `json:"price"`
+}
+
+func (q *Queries) CreateProduct(ctx context.Context, arg CreateProductParams) (Product, error) {
+	row := q.db.QueryRow(ctx, createProduct, arg.Name, arg.StockAvailable, arg.Price)
+	var i Product
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.StockAvailable,
+		&i.StockReserved,
+		&i.Price,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateProduct = `-- name: UpdateProduct :one
+UPDATE products
+SET name = $2,
+    price = $3,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, name, stock_available, stock_reserved, price, created_at, updated_at
+`
+
+type UpdateProductParams struct {
+	ID    uuid.UUID      `json:"id"`
+	Name  string         `json:"name"`
+	Price pgtype.Numeric `json:"price"`
+}
+
+func (q *Queries) UpdateProduct(ctx context.Context, arg UpdateProductParams) (Product, error) {
+	row := q.db.QueryRow(ctx, updateProduct, arg.ID, arg.Name, arg.Price)
+	var i Product
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.StockAvailable,
+		&i.StockReserved,
+		&i.Price,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const restockProduct = `-- name: RestockProduct :one
+UPDATE products
+SET stock_available = stock_available + $2,
+    updated_at = NOW()
+WHERE id = $1
+RETURNING id, name, stock_available, stock_reserved, price, created_at, updated_at
+`
+
+type RestockProductParams struct {
+	ID       uuid.UUID `json:"id"`
+	Quantity int32     `json:"quantity"`
+}
+
+func (q *Queries) RestockProduct(ctx context.Context, arg RestockProductParams) (Product, error) {
+	row := q.db.QueryRow(ctx, restockProduct, arg.ID, arg.Quantity)
+	var i Product
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.StockAvailable,
+		&i.StockReserved,
+		&i.Price,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const deleteProduct = `-- name: DeleteProduct :exec
+DELETE FROM products
+WHERE id = $1
+`
+
+func (q *Queries) DeleteProduct(ctx context.Context, id uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteProduct, id)
+	return err
 }

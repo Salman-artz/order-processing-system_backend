@@ -16,6 +16,7 @@ import (
 type OrderService interface {
 	CreateOrder(ctx context.Context, customerID string, items []events.OrderItem) (repository.Order, error)
 	GetOrder(ctx context.Context, orderID string) (repository.Order, error)
+	GetOrderItems(ctx context.Context, orderID string) ([]repository.OrderItem, error)
 	ListCustomerOrders(ctx context.Context, customerID string) ([]repository.Order, error)
 	ListAllOrders(ctx context.Context) ([]repository.Order, error)
 	GetOrderTimeline(ctx context.Context, orderID string) ([]repository.SagaLog, error)
@@ -123,6 +124,14 @@ func (s *orderService) GetOrder(ctx context.Context, orderID string) (repository
 		return repository.Order{}, err
 	}
 	return s.repo.GetOrder(ctx, uid)
+}
+
+func (s *orderService) GetOrderItems(ctx context.Context, orderID string) ([]repository.OrderItem, error) {
+	uid, err := uuid.Parse(orderID)
+	if err != nil {
+		return nil, err
+	}
+	return s.repo.ListOrderItems(ctx, uid)
 }
 
 func (s *orderService) ListCustomerOrders(ctx context.Context, customerID string) ([]repository.Order, error) {

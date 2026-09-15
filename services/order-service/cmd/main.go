@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
+	"github.com/gofiber/fiber/v2/middleware/proxy"
 	"github.com/joho/godotenv"
 	"github.com/nats-io/nats.go/jetstream"
 	
@@ -92,6 +94,12 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	})
 
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowMethods: "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD",
+	}))
+
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
@@ -99,6 +107,24 @@ func main() {
 	// Setup Routes
 	v1 := app.Group("/api/v1")
 	
+	// Products proxy to inventory-service
+	invHTTPURL := os.Getenv("INVENTORY_HTTP_URL")
+	if invHTTPURL == "" {
+		invHTTPURL = "http://inventory-service:8081"
+	}
+	v1.All("/products*", func(c *fiber.Ctx) error {
+		return proxy.Do(c, fmt.Sprintf("%s%s", invHTTPURL, c.OriginalURL()))
+	})
+
+	// Payments proxy to payment-service
+	payHTTPURL := os.Getenv("PAYMENT_HTTP_URL")
+	if payHTTPURL == "" {
+		payHTTPURL = "http://payment-service:8082"
+	}
+	v1.All("/payments/*", func(c *fiber.Ctx) error {
+		return proxy.Do(c, fmt.Sprintf("%s%s", payHTTPURL, c.OriginalURL()))
+	})
+
 	// Auth routes
 	auth := v1.Group("/auth")
 	auth.Post("/register", authHandler.Register)

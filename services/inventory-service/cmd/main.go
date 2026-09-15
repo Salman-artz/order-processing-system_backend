@@ -13,6 +13,7 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"google.golang.org/grpc"
 	"github.com/gofiber/fiber/v2"
+	"github.com/gofiber/fiber/v2/middleware/cors"
 
 	"github.com/order-processing-system/inventory-service/internal/event"
 	"github.com/order-processing-system/inventory-service/internal/handler"
@@ -113,6 +114,12 @@ func main() {
 		WriteTimeout: 10 * time.Second,
 	})
 
+	app.Use(cors.New(cors.Config{
+		AllowOrigins: "*",
+		AllowHeaders: "Origin, Content-Type, Accept, Authorization",
+		AllowMethods: "GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD",
+	}))
+
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
@@ -120,6 +127,12 @@ func main() {
 	restHandler := handler.NewInventoryRESTHandler(repo)
 	v1 := app.Group("/api/v1")
 	v1.Get("/products", restHandler.ListProducts)
+	v1.Post("/products", restHandler.CreateProduct)
+	v1.Put("/products/:id", restHandler.UpdateProduct)
+	v1.Patch("/products/:id/stock", restHandler.RestockProduct)
+	v1.Post("/products/:id/restock", restHandler.RestockProduct)
+	v1.Post("/products/:id/stock", restHandler.RestockProduct)
+	v1.Delete("/products/:id", restHandler.DeleteProduct)
 
 	httpPort := os.Getenv("INVENTORY_HTTP_PORT")
 	if httpPort == "" {
