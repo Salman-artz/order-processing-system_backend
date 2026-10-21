@@ -4,6 +4,22 @@ Backend event-driven untuk pemrosesan order e-commerce dengan pola **Saga Choreo
 
 ---
 
+## 📸 Observabilitas & Saga Execution Preview
+
+<p align="center">
+  <img src="screenshots/foto3_realtime_order_monitoring_dashboard.png" alt="Real-time Order Monitoring" width="90%" />
+  <br/>
+  <em>Dashboard Monitoring Real-Time Metrik Transaksi & WebSocket Event Stream</em>
+</p>
+
+<p align="center">
+  <img src="screenshots/foto2_saga_execution_timeline_ui.png" alt="Saga Execution Timeline" width="90%" />
+  <br/>
+  <em>Visualisasi Alur Eksekusi Distributed Saga Choreography & Kompensasi Rollback</em>
+</p>
+
+---
+
 ## Status & Fitur Project
 
 Versi saat ini telah mengimplementasikan arsitektur mikroservis lengkap yang *production-ready*:
