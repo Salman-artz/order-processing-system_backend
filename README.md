@@ -1,239 +1,91 @@
-# Order Processing System - Backend
+# Order Processing System - Distributed Microservices (Backend)
 
-Backend event-driven untuk pemrosesan order e-commerce dengan pola **Saga Choreography**. Sistem terdiri dari beberapa microservice Go yang berkomunikasi melalui REST, gRPC, NATS JetStream, dan terintegrasi dengan Payment Gateway (Midtrans).
-
----
-
-## 📸 Observabilitas & Saga Execution Preview
-
-<p align="center">
-  <img src="screenshots/foto3_realtime_order_monitoring_dashboard.png" alt="Real-time Order Monitoring" width="90%" />
-  <br/>
-  <em>Dashboard Monitoring Real-Time Metrik Transaksi & WebSocket Event Stream</em>
-</p>
-
-<p align="center">
-  <img src="screenshots/foto2_saga_execution_timeline_ui.png" alt="Saga Execution Timeline" width="90%" />
-  <br/>
-  <em>Visualisasi Alur Eksekusi Distributed Saga Choreography & Kompensasi Rollback</em>
-</p>
+Backend berkinerja tinggi (*High-Throughput Distributed Microservices*) untuk sistem pemrosesan pesanan terdistribusi dengan pola **Saga Choreography**. Dibangun menggunakan Go (Golang), Fiber, NATS JetStream, PostgreSQL (*Database-per-Service*), gRPC, Docker, dan terintegrasi dengan Payment Gateway Midtrans.
 
 ---
 
-## Status & Fitur Project
+## 📸 Antarmuka Observabilitas & Saga Preview
 
-Versi saat ini telah mengimplementasikan arsitektur mikroservis lengkap yang *production-ready*:
-
-- **Order Service (:8080)**:
-  - Register & Login JWT (Role: `CUSTOMER` vs `ADMIN`).
-  - Pembuatan order & manajemen item order dengan resolusi katalog produk.
-  - API Gateway / Reverse Proxy otomatis untuk `/products*` dan `/payments*`.
-  - Saga Choreography consumer & publisher.
-- **Inventory Service (:8081 & gRPC :50051)**:
-  - **CRUD Produk Lengkap**: Create (`POST`), Update Harga & Nama (`PUT`), Delete (`DELETE`).
-  - **Manajemen & Restock Stok**: Tambah stok (`PATCH /products/:id/stock` & `POST /products/:id/restock`).
-  - **Saga Inventory Lock**: Reservasi stok (`stock.reserved`), pelepasan kompensasi (`order.cancelled`), dan konfirmasi permanen (`order.completed`).
-  - Pemisahan status stok: **Available Stock** (tersedia) vs **Locked / Reserved Stock** (terkunci sementara oleh Saga).
-  - gRPC server untuk query verifikasi cepat antar-service.
-  - Auto-seed data produk awal saat database masih kosong.
-- **Payment Service (:8082)**:
-  - **Integrasi Payment Gateway Midtrans Snap**: Pembuatan token transaksi Snap (`/api/v1/payments/midtrans/snap`).
-  - **Webhook Notification Callback**: Menerima callback status dari Midtrans (`/api/v1/payments/midtrans/notification`) dengan verifikasi digital signature **`SHA512(order_id + status_code + gross_amount + server_key)`**.
-  - **Simulator Pembayaran**: Endpoint `/api/v1/payments/midtrans/simulate` untuk pengujian lokal (sukses/batal).
-  - Order tertahan di `AWAITING_PAYMENT` sampai ada konfirmasi nyata dari payment gateway.
-- **Notification Service (:8083 & WebSocket)**:
-  - Pencatatan riwayat event saga ke `notification_db`.
-  - Broadcast perubahan status order (`PENDING`, `RESERVED`, `AWAITING_PAYMENT`, `COMPLETED`, `CANCELLED`) ke browser secara real-time via WebSocket.
-- **Database & Isolasi Data**:
-  - **Database-per-Service Pattern**: 4 instance PostgreSQL terpisah (`order_db`, `inventory_db`, `payment_db`, `notification_db`).
-  - Auto-migration saat service dimulai.
-- **Docker & Testing**:
-  - Docker Compose full-stack lokal.
-  - Automated End-to-End (E2E) Test Suite Playwright (34 test cases passing).
+| Preview Antarmuka | Deskripsi Fitur & Rekayasa Sistem |
+|---|---|
+| <img src="screenshots/foto3_customer_storefront_order.png" alt="Customer Storefront & Live Cockpit" width="540" /> | **Live Operations Cockpit & Storefront**<br/>Simulasi transaksi real-time dengan tombol *Place Order* (Commit Flow) dan *Simulate Failure* (Rollback Flow) yang memicu kompensasi stok secara instan. |
+| <img src="screenshots/foto4_saga_execution_timeline_ui.png" alt="Saga Execution Timeline UI" width="540" /> | **Saga Execution Timeline UI**<br/>Visualisasi alur langkah transaksi terdistribusi, durasi latensi per span (OpenTelemetry), serta penanganan kompensasi rollback inventaris otomatis. |
+| <img src="screenshots/foto5_realtime_order_monitoring_dashboard.png" alt="Real-time Order Monitoring Dashboard" width="540" /> | **Real-time Order Monitoring Dashboard**<br/>Konsol observabilitas terpusat: metrik throughput event NATS JetStream (1.420 evt/s), rasio keberhasilan Saga (98.4%), dan status cluster. |
+| <img src="screenshots/foto6_inventory_reservation_rollback.png" alt="Inventory Reservation & Rollback UI" width="540" /> | **Inventory Reservation & Rollback UI**<br/>Audit log database PostgreSQL terisolasi: pelacakan *Available Stock* vs *Reserved Stock (Saga Locks)* dan pencegahan *stock race condition*. |
+| <img src="screenshots/foto1_login_light_mode.png" alt="Login Mode Terang" width="540" /> | **Login Mode Terang (Light Mode)**<br/>Antarmuka berstandar enterprise dengan palet Titanium Canvas dan tipografi monospace berdensitas tinggi. |
+| <img src="screenshots/foto2_login_dark_mode.png" alt="Login Mode Gelap" width="540" /> | **Login Mode Gelap (Dark Mode)**<br/>Palet Titanium Gunmetal & Industrial Amber dengan rasio kontras tinggi dan telemetry metadata status cluster. |
 
 ---
 
-## Arsitektur Sistem
+## 🏗️ Clean Architecture & Struktur Modul Backend
 
-```text
-                         +-------------------+
- Customer / Admin ------>|   Order Service   | :8080 (API Gateway & Auth)
-        REST             +---------+---------+
-                                   │
-                              NATS JetStream (:4222)
-               ┌───────────────────┼───────────────────┐
-               │                   │                   │
-       +-------▼-------+   +-------▼-------+   +-------▼--------+
-       |   Inventory   |   |    Payment    |   |  Notification  |
-       | :8081 / gRPC  |   | :8082         |   | :8083 / WS     |
-       +-------+-------+   +-------+-------+   +--------+-------+
-               │                   │                    │
-        inventory_db          payment_db          notification_db
-         (Port 6433)          (Port 6434)           (Port 6435)
+Backend menerapkan prinsip **Clean Architecture & Separation of Concerns** pada setiap microservice:
+1. **Presentation Layer (`internal/handler`)**: Fiber HTTP handlers, router endpoints, middleware autentikasi JWT stateless, dan CORS handler.
+2. **Application Layer (`internal/service`)**: Domain business logic, Saga orchestration flow, kalkulasi saldo, dan validasi transaksi.
+3. **Domain Layer (`pkg/events`, `internal/repository/models.go`)**: Entitas inti, kontrak event payload, subjek NATS JetStream, dan model status transaksi.
+4. **Infrastructure Layer (`internal/repository`, `pkg/natsclient`, `pkg/postgres`)**: Implementasi akses database PostgreSQL via connection pool, query SQLC, dan pub/sub NATS JetStream client.
 
-                         order_db (Port 6432)
+---
+
+## ⚡ Alur Saga Choreography & Kompensasi Rollback
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Client as Web Client (Next.js)
+    participant Order as Order Service (:8001)
+    participant NATS as NATS JetStream
+    participant Inv as Inventory Service (:8002)
+    participant Pay as Payment Service (:8003)
+
+    Client->>Order: POST /api/v1/orders (Place Order)
+    Order->>Order: Simpan Order (Status: PENDING)
+    Order->>NATS: Publish (order.created)
+    
+    NATS->>Inv: Consume (order.created)
+    Note over Inv: Lock stok di PostgreSQL (stock_reserved)
+    alt Stok Cukup
+        Inv->>NATS: Publish (inventory.reserved)
+    else Stok Habis
+        Inv->>NATS: Publish (inventory.failed)
+    end
+
+    NATS->>Pay: Consume (inventory.reserved)
+    Note over Pay: Verifikasi Pembayaran (Midtrans / Sandbox)
+    alt Pembayaran Berhasil (Commit Flow)
+        Pay->>NATS: Publish (payment.success)
+        NATS->>Order: Consume (payment.success) ➔ Status: COMPLETED
+        NATS->>Inv: Consume (order.completed) ➔ Finalisasi Pengurangan Stok
+    else Pembayaran Gagal (Rollback Flow)
+        Pay->>NATS: Publish (payment.failed)
+        NATS->>Inv: Consume (payment.failed) ➔ SAGA KOMPENSASI
+        Note over Inv: Buka kunci stok (stock_reserved -> stock_available)
+        NATS->>Order: Consume (order.cancelled) ➔ Status: CANCELLED
+    end
 ```
 
 ---
 
-## Alur Saga Choreography
+## 🛠️ Tech Stack & Spesifikasi
 
-```text
-[Customer Checkout] ──► Order Service: Simpan "PENDING" & Publish "order.created"
-                              │
-                              ▼
-[Inventory Service] ──► Cek Stok Barang
-       ├─► (Stok Cukup) : Kurangi Available, Tambah Reserved & Publish "stock.reserved"
-       │         │
-       │         ▼
-       │   [Order Service] : Ubah status jadi "AWAITING_PAYMENT" & Publish "payment.requested"
-       │         │
-       │         ▼
-       │   [Payment Gateway / Midtrans] : Customer membayar via QRIS/VA/CC
-       │         ├─► (Sukses / Settlement) :
-       │         │       Publish "payment.success"
-       │         │       └─► Order Service set "COMPLETED" & Inventory Service confirm stock
-       │         │
-       │         └─► (Gagal / Cancel / Expire) :
-       │                 Publish "payment.failed"
-       │                 └─► Order Service set "CANCELLED" & Inventory Service release stock (Rollback)
-       │
-       └─► (Stok Kurang) : Publish "stock.rejected"
-                 └─► Order Service langsung set "CANCELLED"
-```
+- **Bahasa & Framework**: Go (Golang 1.22+), Fiber v2
+- **Message Broker**: NATS JetStream (Pub/Sub terjamin, At-least-once delivery, Deduplication)
+- **Database**: PostgreSQL 16 dengan pola **Database-per-Service** (4 Database terisolasi: `order_db`, `inventory_db`, `payment_db`, `notification_db`)
+- **Protokol Komunikasi**: REST API (HTTP/2), gRPC (High-speed inter-service query), Protocol Buffers
+- **Observabilitas**: OpenTelemetry Distributed Tracing spans, Structured JSON Logging (zerolog)
+- **Containerization**: Docker & Docker Compose
 
 ---
 
-## Tech Stack
+## 🚀 Menjalankan Backend Secara Lokal
 
-| Area | Teknologi | Keterangan |
-|---|---|---|
-| **Bahasa** | Go 1.23+ | Native concurrency & high performance |
-| **HTTP Framework** | Fiber v2 | REST routing & reverse proxy gateway |
-| **RPC** | gRPC + Protocol Buffers v3 | Low-latency inter-service sync communication |
-| **Event Broker** | NATS JetStream | Event-driven async messaging & stream persistence |
-| **Payment Gateway** | Midtrans Snap & Webhook | Snap Token, SHA512 Signature verification |
-| **Database** | PostgreSQL 16 | Isolated database-per-service pattern |
-| **Migration** | golang-migrate | Automatic schema migrations on service startup |
-| **Realtime** | WebSockets (gorilla) | Live order status push to client frontend |
-| **Logging** | zerolog | Structured JSON logging |
-| **Testing** | Playwright & Go testing | 34 automated E2E tests covering full lifecycle |
-| **Containerization** | Docker & Docker Compose v2 | Local multi-container orchestration |
-
----
-
-## Struktur Repository
-
-```text
-services/
-  order-service/         # API order, auth JWT, reverse proxy gateway, saga consumer
-  inventory-service/     # Produk CRUD, restock, saga lock/release, REST & gRPC
-  payment-service/       # Integrasi Midtrans Snap, webhook callback, SHA512, simulation
-  notification-service/  # Event audit log & WebSocket push server
-pkg/
-  events/                # NATS Stream subjects dan payload schemas
-  jwtutil/               # Helper pembuatan & verifikasi JWT
-  logger/                # Shared zerolog logger
-  natsclient/            # Shared NATS JetStream client connector
-  postgres/              # PostgreSQL connection pool & migration runner
-proto/                   # Definisi gRPC Protocol Buffers inventory
-scripts/                 # Database creation & migration scripts
-docker-compose.yml       # Full stack local docker compose
-Makefile                 # Command shorthand development
-```
-
----
-
-## Menjalankan dengan Docker Compose
-
-1. Siapkan file environment:
-   ```bash
-   cp .env.docker.example .env.docker
-   ```
-
-2. Jalankan seluruh stack (NATS, 4 Database PostgreSQL, dan 4 Microservices Go):
-   ```bash
-   docker compose --env-file .env.docker up -d --build
-   ```
-
-3. Cek status container:
-   ```bash
-   docker compose ps
-   ```
-
----
-
-## Port & Akses Layanan
-
-| Komponen / Service | URL / Port | Keterangan |
-|---|---|---|
-| **Order Service (API Gateway)** | `http://localhost:8080` | Endpoint utama customer, admin, & reverse proxy |
-| **Inventory Service (REST)** | `http://localhost:8081` | REST catalog & stock management |
-| **Inventory Service (gRPC)** | `localhost:50051` | gRPC sync stock verification |
-| **Payment Service** | `http://localhost:8082` | Midtrans Snap & Webhook endpoints |
-| **Notification Service** | `ws://localhost:8083/ws/orders/:id` | WebSocket real-time broadcast |
-| **NATS Broker** | `nats://localhost:4222` | JetStream message broker |
-| **NATS Monitoring** | `http://localhost:8222` | NATS web monitoring dashboard |
-
-### Akses Database PostgreSQL:
-
-Semua database berjalan dengan user `postgres` dan password `123`:
-
-| Database | Port Host | Nama DB |
-|---|---|---|
-| **Order DB** | `localhost:6432` | `order_db` |
-| **Inventory DB** | `localhost:6433` | `inventory_db` |
-| **Payment DB** | `localhost:6434` | `payment_db` |
-| **Notification DB** | `localhost:6435` | `notification_db` |
-
-Akses CLI langsung via Docker:
 ```bash
-docker exec -it postgres-order psql -U postgres -d order_db
-docker exec -it postgres-inventory psql -U postgres -d inventory_db
-docker exec -it postgres-payment psql -U postgres -d payment_db
+# 1. Jalankan cluster NATS JetStream & PostgreSQL
+docker-compose up -d nats postgres-order postgres-inventory postgres-payment postgres-notification
+
+# 2. Jalankan test otomatis microservices
+cd services/order-service && go test ./...
+cd ../inventory-service && go test ./...
+cd ../payment-service && go test ./...
+cd ../notification-service && go test ./...
 ```
-
----
-
-## Daftar Endpoint API Utama
-
-### 1. Autentikasi
-- `POST /api/v1/auth/register` : Registrasi akun baru (Customer / Admin).
-- `POST /api/v1/auth/login` : Login akun & mendapatkan JWT token.
-
-### 2. Pesanan (Customer)
-- `POST /api/v1/orders` : Membuat pesanan baru (Memicu alur Saga).
-- `GET /api/v1/orders` : Menampilkan daftar pesanan milik customer.
-- `GET /api/v1/orders/:id` : Menampilkan detail pesanan & item produk.
-
-### 3. Monitoring (Admin)
-- `GET /api/v1/admin/orders` : Menampilkan seluruh pesanan di sistem.
-- `GET /api/v1/admin/orders/:id/timeline` : Menampilkan log audit trail tahapan Saga.
-
-### 4. Inventaris & Produk (Admin / Public)
-- `GET /api/v1/products` : Menampilkan seluruh katalog produk dan ketersediaan stok.
-- `POST /api/v1/products` : Menambah produk baru ke katalog.
-- `PUT /api/v1/products/:id` : Mengedit nama atau harga produk.
-- `PATCH /api/v1/products/:id/stock` : Mengisi ulang (*restock*) stok barang.
-- `POST /api/v1/products/:id/restock` : Restock endpoint alias.
-- `DELETE /api/v1/products/:id` : Menghapus produk dari inventaris.
-
-### 5. Pembayaran (Payment Gateway / Midtrans)
-- `POST /api/v1/payments/midtrans/snap` : Menghasilkan Snap Token transaksi Midtrans.
-- `POST /api/v1/payments/midtrans/notification` : Webhook callback resmi Midtrans (Verifikasi signature SHA512).
-- `POST /api/v1/payments/midtrans/simulate` : Simulasi pembayaran lokal (*settlement* / *cancel*).
-
----
-
-## Event NATS JetStream
-
-| Subject | Publisher | Consumer | Deskripsi |
-|---|---|---|---|
-| `order.created` | Order Service | Inventory, Notification | Pesanan dibuat, memicu pengecekan stok |
-| `stock.reserved` | Inventory Service | Order Service, Notification | Stok berhasil dikunci untuk order |
-| `stock.rejected` | Inventory Service | Order Service, Notification | Stok tidak mencukupi, pesanan dibatalkan |
-| `payment.requested` | Order Service | Payment Service | Permintaan proses pembayaran |
-| `payment.success` | Payment Service | Order Service, Notification | Pembayaran terverifikasi lunas |
-| `payment.failed` | Payment Service | Order Service, Notification | Pembayaran ditolak/dibatalkan |
-| `order.completed` | Order Service | Inventory, Notification | Pesanan selesai, stok dipotong permanen |
-| `order.cancelled` | Order Service | Inventory, Notification | Pesanan dibatalkan, stok di-rollback ke Available |

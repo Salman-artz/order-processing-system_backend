@@ -112,7 +112,7 @@ func (s *paymentService) ProcessPaymentSaga(ctx context.Context, payload events.
 	amountNumeric := repository.Float64ToNumeric(payload.Amount)
 
 	// 1. Create initial payment record as PENDING
-	_, err = s.repo.CreatePayment(ctx, repository.CreatePaymentParams{
+	payment, err := s.repo.CreatePayment(ctx, repository.CreatePaymentParams{
 		OrderID: orderUUID,
 		Amount:  amountNumeric,
 		Status:  "PENDING",
@@ -121,17 +121,60 @@ func (s *paymentService) ProcessPaymentSaga(ctx context.Context, payload events.
 		return fmt.Errorf("failed to create payment: %w", err)
 	}
 
-	// 2. Request Midtrans Snap Token
-	snapResp, err := s.CreateSnapTransaction(ctx, payload.OrderID, payload.Amount, "customer@example.com")
-	if err != nil {
-		log.Warn().Err(err).Str("order_id", payload.OrderID).Msg("Midtrans Snap creation fallback")
-	} else {
-		log.Info().Str("order_id", payload.OrderID).Str("snap_token", snapResp.Token).Msg("Midtrans Snap Token generated")
+	// Mock rules for predictable failure during testing / simulation
+	var isSuccess bool = true
+	var failReason string
+
+	if payload.Amount >= 10000000 { // 10 million
+		isSuccess = false
+		failReason = "Transaction limit exceeded"
+	} else if payload.Amount == 8888 {
+		isSuccess = false
+		failReason = "Insufficient mock balance"
 	}
 
-	// 3. Payment record remains PENDING waiting for Midtrans Webhook Notification or Customer Checkout
-	log.Info().Str("order_id", payload.OrderID).Msg("Payment created as PENDING, awaiting Midtrans transaction settlement")
-	return nil
+	// If Midtrans is actively configured and this is NOT a simulated failure, generate Snap token and await webhook
+	if s.serverKey != "" && isSuccess {
+		snapResp, err := s.CreateSnapTransaction(ctx, payload.OrderID, payload.Amount, "customer@example.com")
+		if err != nil {
+			log.Warn().Err(err).Str("order_id", payload.OrderID).Msg("Midtrans Snap creation fallback")
+		} else {
+			log.Info().Str("order_id", payload.OrderID).Str("snap_token", snapResp.Token).Msg("Midtrans Snap Token generated")
+		}
+		log.Info().Str("order_id", payload.OrderID).Msg("Payment created as PENDING, awaiting Midtrans transaction settlement")
+		return nil
+	}
+
+	// Direct simulation / Sandbox processing
+	newStatus := "SUCCESS"
+	simulatedReason := pgtype.Text{Valid: false}
+
+	if !isSuccess {
+		newStatus = "FAILED"
+		simulatedReason = pgtype.Text{String: failReason, Valid: true}
+	}
+
+	_, err = s.repo.UpdatePaymentStatus(ctx, repository.UpdatePaymentStatusParams{
+		ID:                     payment.ID,
+		Status:                 newStatus,
+		SimulatedFailureReason: simulatedReason,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to update payment status: %w", err)
+	}
+
+	// Publish appropriate NATS event
+	if isSuccess {
+		return s.publisher.PublishPaymentSuccess(ctx, events.PaymentSuccessPayload{
+			OrderID:   payload.OrderID,
+			PaymentID: payment.ID.String(),
+		})
+	} else {
+		return s.publisher.PublishPaymentFailed(ctx, events.PaymentFailedPayload{
+			OrderID: payload.OrderID,
+			Reason:  failReason,
+		})
+	}
 }
 
 func (s *paymentService) CreateSnapTransaction(ctx context.Context, orderID string, amount float64, customerEmail string) (*MidtransSnapResponse, error) {
