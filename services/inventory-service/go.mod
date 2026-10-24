@@ -1,6 +1,6 @@
 module github.com/order-processing-system/inventory-service
 
-go 1.24.0
+go 1.25
 
 require (
 	github.com/gofiber/fiber/v2 v2.52.15

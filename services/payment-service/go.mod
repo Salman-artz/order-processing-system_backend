@@ -1,6 +1,6 @@
 module github.com/order-processing-system/payment-service
 
-go 1.24.0
+go 1.25
 
 require (
 	github.com/gofiber/fiber/v2 v2.52.5
@@ -9,6 +9,7 @@ require (
 	github.com/joho/godotenv v1.5.1
 	github.com/nats-io/nats.go v1.36.0
 	github.com/order-processing-system/pkg v0.0.0-00010101000000-000000000000
+	github.com/rs/zerolog v1.33.0
 )
 
 require (
@@ -25,7 +26,6 @@ require (
 	github.com/nats-io/nkeys v0.4.7 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/rivo/uniseg v0.2.0 // indirect
-	github.com/rs/zerolog v1.33.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasthttp v1.51.0 // indirect
 	github.com/valyala/tcplisten v1.0.0 // indirect
