@@ -44,7 +44,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
       POSTGRES_DB: order_db
     ports:
-      - "6432:5432"
+      - "7432:5432"
     volumes:
       - pgdata_order:/var/lib/postgresql/data
     networks:
@@ -64,7 +64,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
       POSTGRES_DB: inventory_db
     ports:
-      - "6433:5432" # exposed to 6433 host
+      - "7433:5432" # exposed to 7433 host
     volumes:
       - pgdata_inventory:/var/lib/postgresql/data
     networks:
@@ -84,7 +84,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
       POSTGRES_DB: payment_db
     ports:
-      - "6434:5432"
+      - "7434:5432"
     volumes:
       - pgdata_payment:/var/lib/postgresql/data
     networks:
@@ -104,7 +104,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
       POSTGRES_DB: notification_db
     ports:
-      - "6435:5432"
+      - "7435:5432"
     volumes:
       - pgdata_notification:/var/lib/postgresql/data
     networks:
@@ -125,12 +125,14 @@ services:
       dockerfile: services/order-service/Dockerfile
     container_name: order-service
     ports:
-      - "8080:8080"
+      - "8085:8080"
     environment:
       - ORDER_DB_URL=${ORDER_DB_URL}
       - JWT_SECRET=${JWT_SECRET}
       - NATS_URL=${NATS_URL}
       - INVENTORY_GRPC_URL=inventory-service:50051
+      - INVENTORY_HTTP_URL=http://inventory-service:8081
+      - PAYMENT_HTTP_URL=http://payment-service:8082
     depends_on:
       nats:
         condition: service_healthy

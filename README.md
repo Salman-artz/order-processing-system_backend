@@ -1,17 +1,20 @@
 # Order Processing System - Distributed Microservices (Backend)
 
-Backend berkinerja tinggi (*High-Throughput Distributed Microservices*) untuk sistem pemrosesan pesanan terdistribusi dengan pola **Saga Choreography**. Dibangun menggunakan Go (Golang), Fiber, NATS JetStream, PostgreSQL (*Database-per-Service*), gRPC, Docker, dan terintegrasi dengan Payment Gateway Midtrans.
+Backend berkinerja tinggi (*High-Throughput Distributed Microservices*) untuk sistem pemrosesan pesanan terdistribusi dengan pola **Saga Choreography**. Dibangun menggunakan Go (Golang), Fiber, NATS JetStream, PostgreSQL (*Database-per-Service*), gRPC, Docker Compose, dan terintegrasi dengan Payment Gateway Midtrans.
 
 ---
 
-## 📸 Antarmuka Observabilitas & Saga Preview
+## 📸 Antarmuka Observabilitas & Real Distributed Execution Preview
 
 | Preview Antarmuka | Deskripsi Fitur & Rekayasa Sistem |
 |---|---|
-| <img src="screenshots/foto3_customer_storefront_order.png" alt="Customer Storefront & Live Cockpit" width="540" /> | **Live Operations Cockpit & Storefront**<br/>Simulasi transaksi real-time dengan tombol *Place Order* (Commit Flow) dan *Simulate Failure* (Rollback Flow) yang memicu kompensasi stok secara instan. |
-| <img src="screenshots/foto4_saga_execution_timeline_ui.png" alt="Saga Execution Timeline UI" width="540" /> | **Saga Execution Timeline UI**<br/>Visualisasi alur langkah transaksi terdistribusi, durasi latensi per span (OpenTelemetry), serta penanganan kompensasi rollback inventaris otomatis. |
-| <img src="screenshots/foto5_realtime_order_monitoring_dashboard.png" alt="Real-time Order Monitoring Dashboard" width="540" /> | **Real-time Order Monitoring Dashboard**<br/>Konsol observabilitas terpusat: metrik throughput event NATS JetStream (1.420 evt/s), rasio keberhasilan Saga (98.4%), dan status cluster. |
-| <img src="screenshots/foto6_inventory_reservation_rollback.png" alt="Inventory Reservation & Rollback UI" width="540" /> | **Inventory Reservation & Rollback UI**<br/>Audit log database PostgreSQL terisolasi: pelacakan *Available Stock* vs *Reserved Stock (Saga Locks)* dan pencegahan *stock race condition*. |
+| <img src="screenshots/live_real_step2_order_commit_nats.png" alt="Real Order Commit Flow" width="540" /> | **Live Order Commit Flow (NATS JetStream)**<br/>Transaksi nyata multi-service: `order-service` mendispatch `order.created`, `inventory-service` mengunci stok di PostgreSQL, dan `payment-service` memproses pembayaran hingga status `COMPLETED` dalam 26ms. |
+| <img src="screenshots/live_real_step3_saga_rollback_nats.png" alt="Real Saga Compensatory Rollback" width="540" /> | **Real-Time Saga Compensatory Rollback**<br/>Simulasi kegagalan pembayaran: NATS mempublikasikan `payment.failed`, memicu transaksi kompensasi otomatis pada `inventory-service` untuk merestore stok (*lock released*) dan membatalkan pesanan. |
+| <img src="screenshots/live_real_step3_trace_rollback_drawer.png" alt="Distributed Trace Waterfall & JSON Payload" width="540" /> | **Distributed Trace Waterfall & Raw JSON Payload**<br/>Drawer telemetri interaktif untuk inspeksi rincian span latensi per mikroservis, trace ID, correlation ID, dan payload event mentah NATS JetStream. |
+| <img src="screenshots/live_real_step4_orders_registry.png" alt="Distributed Orders Registry" width="540" /> | **Distributed Orders Registry (PostgreSQL Audit)**<br/>Audit log database persisten lintas transaksi terdistribusi yang mencatat status final `COMPLETED` dan `CANCELLED` secara deterministic. |
+| <img src="screenshots/live_real_step5_order_saga_timeline.png" alt="Saga Execution Timeline UI" width="540" /> | **Saga Execution Timeline UI**<br/>Visualisasi alur langkah transaksi terdistribusi, durasi latensi per span, serta penanganan kompensasi rollback inventaris otomatis. |
+| <img src="screenshots/live_real_step1_inventory_restock.png" alt="PostgreSQL Inventory Ledger" width="540" /> | **PostgreSQL Inventory Ledger & Stock Isolation**<br/>Pemisahan *Available Stock* vs *Reserved Stock (Saga Locks)* dengan penanganan race condition berbasis transaksi atomik PostgreSQL. |
+| <img src="screenshots/live_real_step7_telemetry_dashboard.png" alt="Real-time Order Monitoring Dashboard" width="540" /> | **Real-time Order Monitoring Dashboard**<br/>Konsol observabilitas terpusat: status 4 microservice, metrik throughput event NATS JetStream, dan rasio keberhasilan Saga. |
 | <img src="screenshots/foto1_login_light_mode.png" alt="Login Mode Terang" width="540" /> | **Login Mode Terang (Light Mode)**<br/>Antarmuka berstandar enterprise dengan palet Titanium Canvas dan tipografi monospace berdensitas tinggi. |
 | <img src="screenshots/foto2_login_dark_mode.png" alt="Login Mode Gelap" width="540" /> | **Login Mode Gelap (Dark Mode)**<br/>Palet Titanium Gunmetal & Industrial Amber dengan rasio kontras tinggi dan telemetry metadata status cluster. |
 
@@ -20,7 +23,7 @@ Backend berkinerja tinggi (*High-Throughput Distributed Microservices*) untuk si
 ## 🏗️ Clean Architecture & Struktur Modul Backend
 
 Backend menerapkan prinsip **Clean Architecture & Separation of Concerns** pada setiap microservice:
-1. **Presentation Layer (`internal/handler`)**: Fiber HTTP handlers, router endpoints, middleware autentikasi JWT stateless, dan CORS handler.
+1. **Presentation Layer (`internal/handler`)**: Fiber HTTP handlers, router endpoints, reverse-proxy API gateway, middleware autentikasi JWT stateless, dan CORS handler.
 2. **Application Layer (`internal/service`)**: Domain business logic, Saga orchestration flow, kalkulasi saldo, dan validasi transaksi.
 3. **Domain Layer (`pkg/events`, `internal/repository/models.go`)**: Entitas inti, kontrak event payload, subjek NATS JetStream, dan model status transaksi.
 4. **Infrastructure Layer (`internal/repository`, `pkg/natsclient`, `pkg/postgres`)**: Implementasi akses database PostgreSQL via connection pool, query SQLC, dan pub/sub NATS JetStream client.
@@ -33,10 +36,10 @@ Backend menerapkan prinsip **Clean Architecture & Separation of Concerns** pada 
 sequenceDiagram
     autonumber
     participant Client as Web Client (Next.js)
-    participant Order as Order Service (:8001)
-    participant NATS as NATS JetStream
-    participant Inv as Inventory Service (:8002)
-    participant Pay as Payment Service (:8003)
+    participant Order as Order Service (:8085)
+    participant NATS as NATS JetStream (:4222)
+    participant Inv as Inventory Service (:8081)
+    participant Pay as Payment Service (:8082)
 
     Client->>Order: POST /api/v1/orders (Place Order)
     Order->>Order: Simpan Order (Status: PENDING)
@@ -70,20 +73,23 @@ sequenceDiagram
 
 - **Bahasa & Framework**: Go (Golang 1.22+), Fiber v2
 - **Message Broker**: NATS JetStream (Pub/Sub terjamin, At-least-once delivery, Deduplication)
-- **Database**: PostgreSQL 16 dengan pola **Database-per-Service** (4 Database terisolasi: `order_db`, `inventory_db`, `payment_db`, `notification_db`)
+- **Database**: PostgreSQL 16 dengan pola **Database-per-Service** (4 Database terisolasi: `order_db` :7432, `inventory_db` :7433, `payment_db` :7434, `notification_db` :7435)
 - **Protokol Komunikasi**: REST API (HTTP/2), gRPC (High-speed inter-service query), Protocol Buffers
 - **Observabilitas**: OpenTelemetry Distributed Tracing spans, Structured JSON Logging (zerolog)
-- **Containerization**: Docker & Docker Compose
+- **Containerization**: Docker & Docker Compose (9 active containers)
 
 ---
 
-## 🚀 Menjalankan Backend Secara Lokal
+## 🚀 Menjalankan Backend Secara Lokal (Real Microservices Stack)
 
 ```bash
-# 1. Jalankan cluster NATS JetStream & PostgreSQL
-docker-compose up -d nats postgres-order postgres-inventory postgres-payment postgres-notification
+# 1. Jalankan seluruh container stack (NATS + 4 PostgreSQL + 4 Go Microservices)
+docker compose up -d
 
-# 2. Jalankan test otomatis microservices
+# 2. Periksa status container
+docker compose ps
+
+# 3. Jalankan unit & integration test microservices
 cd services/order-service && go test ./...
 cd ../inventory-service && go test ./...
 cd ../payment-service && go test ./...
